@@ -1,4 +1,6 @@
 pub mod broker;
+pub mod codec;
+pub mod connection;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ActorId {
     node: u32,
@@ -22,9 +24,7 @@ pub struct NodeRx {
 }
 
 impl NodeRx {
-    pub async fn next_event(&mut self) -> Result<> {
-        
-    }
+    
 }
 
 impl NodeTx {
@@ -89,4 +89,13 @@ impl Frame {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FrameKind {
     Event = 1,
+}
+
+impl From<u8> for FrameKind {
+    fn from(value: u8) -> Self {
+        match value {
+            1 => Self::Event,
+            _ => panic!("Invalid FrameKind"),
+        }
+    }
 }
