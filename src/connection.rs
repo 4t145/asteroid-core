@@ -1,81 +1,56 @@
+use bytes::Bytes;
+use futures_core::future;
+use quinn::VarInt;
+use std::collections::VecDeque;
+use std::future::poll_fn;
+use std::sync::mpsc;
+use std::sync::Mutex;
 use std::task::{Context, Poll};
 
-use crate::Frame;
 use crate::codec::Codec;
-pub struct Connection {
-    rx: quinn::RecvStream,
-    tx: quinn::SendStream,
-}
-
+use crate::Frame;
 
 pub struct ConnectionReceiver {
     rx: quinn::RecvStream,
-    kind_buf: [u8; 1],
-    size_buf: [u8; 8],
-    state: ReadState,
+    event_fan_out: flume::Sender<Bytes>,
 }
 
-
-pub enum ReadState {
-    WaitKind,
-    WaitSize,
-    WaitPayload {
-        bias: usize,
-    },
-}
-
-impl ConnectionReceiver  {
-    pub fn poll_read(&mut self, cx: &mut Context) -> Poll<Result<Frame, quinn::ReadError>> {
+impl ConnectionReceiver {
+    pub async fn run_fun_out(&mut self) -> Result<(), quinn::ReadExactError> {
         loop {
-            match self.state {
-                ReadState::WaitKind => {
-                    match self.rx.poll_read(cx, &mut self.kind_buf) {
-                        Poll::Ready(Ok(size)) => {
-                            self.state = ReadState::WaitSize;
-                        }
-                        Poll::Ready(Err(e)) => {
-                            return Poll::Ready(Err(e));
-                        }
-                        Poll::Pending => {
-                            return Poll::Pending;
-                        }
-                    }
-                },
-                ReadState::WaitSize => {
-                    match self.rx.poll_read(cx, &mut self.size_buf) {
-                        Poll::Ready(Ok(size)) => {
-                            self.state = ReadState::WaitPayload {
-                                bias: 0,
-                            };
-                        }
-                        Poll::Ready(Err(e)) => {
-                            return Poll::Ready(Err(e));
-                        }
-                        Poll::Pending => {
-                            return Poll::Pending;
-                        }
-                    }
-                },
-                ReadState::WaitPayload => {
-                    let size = u64::from_be_bytes(self.size_buf) as usize;
-                    let mut payload = vec![0u8; size];
-                    match self.rx.poll_read(cx, &mut payload) {
-                        Poll::Ready(Ok(size)) => {
-                            self.state = ReadState::WaitKind;
-                            return Poll::Ready(Ok(Frame {
-                                kind: self.kind_buf[0].into(),
-                                payload: payload.into(),
-                            }));
-                        }
-                        Poll::Ready(Err(e)) => {
-                            return Poll::Ready(Err(e));
-                        }
-                        Poll::Pending => {
-                            return Poll::Pending;
-                        }
+            let frame = Frame::decode(&mut self.rx).await?;
+            match frame.kind {
+                crate::FrameKind::Close => {
+                    let close_result = self.rx.stop(VarInt::from_u32(0));
+                    break Ok(());
+                }
+                crate::FrameKind::Open => {
+                    todo!("invalid frame kind");
+                }
+                crate::FrameKind::Event => {
+                    let bytes = frame.payload;
+                    if let Err(e) = self.event_fan_out.send_async(bytes).await {
+                        break Ok(());
                     }
                 }
             }
         }
+    }
+}
+
+pub struct ConnectionSender {
+    tx: quinn::SendStream,
+}
+
+pub struct Connection {
+    sender: ConnectionSender,
+    receiver: ConnectionReceiver,
+}
+
+impl Connection {
+    pub async fn send_event(&mut self, event: Bytes) -> Result<(), quinn::WriteError> {
+        let frame = Frame::new(crate::FrameKind::Event, event);
+        frame.encode(&mut self.sender.tx).await?;
+        Ok(())
     }
 }

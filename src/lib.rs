@@ -1,6 +1,8 @@
 pub mod broker;
 pub mod codec;
 pub mod connection;
+pub mod listener;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ActorId {
     node: u32,
@@ -72,7 +74,7 @@ pub struct NextJump {
 pub struct NodeId {
     inner: u32,
 }
-
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Frame {
     kind: FrameKind,
     payload: Bytes,
@@ -88,7 +90,10 @@ impl Frame {
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FrameKind {
-    Event = 1,
+    Close = 0,
+    Open = 1,
+    Event = 2,
+
 }
 
 impl From<u8> for FrameKind {
